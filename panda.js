@@ -25,13 +25,13 @@ module.exports = (function(root) {
     var crypto = require('crypto');
     var querystring = require('querystring');
 
-    
+
     function PandaError(code, error, message, data) {
         if (Error.captureStackTrace)
             Error.captureStackTrace(this, this.constructor);
-        
+
         this.name = 'panda_error';
-        
+
         if (error == undefined && isNaN(code)) {
             error = code;
         }
@@ -99,7 +99,7 @@ module.exports = (function(root) {
         this.shop = options.shop;
         this.name = this.shop.split('.')[0];
         this.port = options.port || 443;
-        
+
         this.httpsAgent = new https.Agent({
             keepAlive: options.keepAlive || true,
             maxSockets: options.maxSockets || 4
@@ -216,8 +216,7 @@ module.exports = (function(root) {
 
             if (options.readable) {
                 o.headers['transfer-encoding'] = 'chunked';
-            }
-            else {
+            } else {
                 o.headers['content-type'] = 'application/json';
                 o.headers['content-length'] = data ? Buffer.byteLength(data) : 0;
 
@@ -235,7 +234,7 @@ module.exports = (function(root) {
                 }
 
                 if (options.headers != undefined) {
-                    for(var key in options.headers)
+                    for (var key in options.headers)
                         o.headers[key] = options.headers[key];
                 }
 
@@ -243,15 +242,24 @@ module.exports = (function(root) {
             }
 
             if (options.writable) {
-                if(!data && !data.on && typeof data.on !== 'function')
+                if (!data && !data.on && typeof data.on !== 'function')
                     throw new PandaError(ERROR.STREAM);
-                
+
                 transmit = request(o).on('response', function(message) {
-                    if (message.statusCode < 400) {
-                        data.emit('open', message);
+                    var statusCode = message.statusCode,
+                        statusMessage = message.statusMessage;
+
+                    if (statusCode && statusCode < 400) {
+                        message.pipe(data);
                     } else {
-                        data.emit('error', message);
+                        data.emit('error', new PandaError({
+                            code: statusCode,
+                            error: HTTP_ERROR[statusCode],
+                            message: statusMessage,
+                            data: message
+                        }));
                     }
+
                 });
             } else {
                 transmit = request(o, function(response) {
@@ -292,21 +300,21 @@ module.exports = (function(root) {
 
             transmit.on('error', function(error) {
                 if (options.readable || options.writable) {
-                    if(!data && !data.on && typeof data.on !== 'function')
+                    if (!data && !data.on && typeof data.on !== 'function')
                         throw new PandaError(ERROR.STREAM);
-                    
+
                     data.emit('error', error);
                 }
-                
+
                 if (callback) callback(error);
                 else throw new PandaError(error);
             });
 
 
             if (options.readable) {
-                if(!data && !data.pipe && typeof data.pipe !== 'function')
+                if (!data && !data.pipe && typeof data.pipe !== 'function')
                     throw new PandaError(ERROR.STREAM);
-                
+
                 data.pipe(transmit);
             } else {
                 transmit.end(data, encoding);
