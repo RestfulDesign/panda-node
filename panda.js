@@ -193,7 +193,7 @@ module.exports = (function(root) {
                 transmit,
                 o = {};
 
-            this.logger("request: %s", method, path);
+            this.logger("request:", method, path);
 
             if (typeof options === 'function') {
                 callback = options;
@@ -277,8 +277,9 @@ module.exports = (function(root) {
                             result = JSON.parse(result);
                         }
 
-                        self.logger("response: status code %d, content type %s %s %s",
-                                    statusCode, contentType,
+                        self.logger("response: status code %d, content type",
+                                    statusCode,
+                                    contentType,
                                     JSON.stringify(headers, null, 1),
                                     JSON.stringify(result, null, 1));
 
