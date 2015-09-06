@@ -25,19 +25,18 @@ module.exports = (function(root) {
     var crypto = require('crypto');
     var querystring = require('querystring');
 
-    var Stream = require('stream');
-    var Readable = Stream.Readable || require('readable-stream').Readable;
-    var Writable = Stream.Writable || require('readable-stream').Writable;
-    var Duplex = Stream.Duplex || require('readable-stream').Duplex;
-
+    
     function PandaError(code, error, message, data) {
+        if (Error.captureStackTrace)
+            Error.captureStackTrace(this, this.constructor);
+        
         this.name = 'panda_error';
-
+        
         if (error == undefined && isNaN(code)) {
             error = code;
         }
 
-        if (isObject(error)) {
+        if (typeof error === 'object') {
             this.code = error.code;
             this.error = error.error;
             this.message = error.message;
@@ -57,7 +56,7 @@ module.exports = (function(root) {
         CONFIG_OPTIONS: {
             code: 1,
             error: 'config error',
-            message: 'missing options'
+            message: 'missing constructor options'
         },
         CONFIG_SHOP: {
             code: 2,
@@ -73,6 +72,11 @@ module.exports = (function(root) {
             code: 4,
             error: 'oauth error',
             message: 'signature mismatch'
+        },
+        STREAM: {
+            code: 5,
+            error: 'stream error',
+            message: 'missing or invalid stream'
         }
     };
 
@@ -92,11 +96,10 @@ module.exports = (function(root) {
 
         this.oauth = options.oauth;
         this.debug = !!options.debug;
-        this.shop = options.shop.split('.')[0];
-        this.host = options.host || 'pandacommerce.net';
+        this.shop = options.shop;
+        this.name = this.shop.split('.')[0];
         this.port = options.port || 443;
-        this.hostname = this.shop + '.' + this.host;
-
+        
         this.httpsAgent = new https.Agent({
             keepAlive: options.keepAlive || true,
             maxSockets: options.maxSockets || 4
@@ -108,7 +111,7 @@ module.exports = (function(root) {
 
     PandaAPI.prototype = {
         "getAuthURL": function() {
-            var url = 'https://' + this.hostname;
+            var url = 'https://' + this.shop;
 
             url += '/admin/oauth/authorize?';
             url += 'client_id=' + this.oauth.api_key;
@@ -121,7 +124,7 @@ module.exports = (function(root) {
         "setAccessToken": function(token) {
             this.oauth.access_token = token;
         },
-        "urlQuery": function(url, query) {
+        "urlQuerystring": function(url, query) {
             var uri;
 
             if (query == undefined) return querystring.parse(url);
@@ -185,8 +188,6 @@ module.exports = (function(root) {
         },
         request: function(method, path, data, options, callback) {
             var request = https.request,
-                readable = false,
-                writable = false,
                 encoding = 'utf8',
                 self = this,
                 transmit,
@@ -204,24 +205,19 @@ module.exports = (function(root) {
                 data = undefined;
             }
 
-            if ((data instanceof Stream)) readable = true;
-            if ((data instanceof Writable)) writable = true;
-            else if ((data instanceof Duplex)) writable = true;
-
             o.method = method || 'get';
             o.agent = this.httpsAgent;
-            o.hostname = this.hostname;
+            o.hostname = this.shop;
             o.port = this.port;
             o.path = path;
             o.headers = {};
 
             o.headers['accept'] = 'application/json';
 
-            if (readable) {
+            if (options.readable) {
                 o.headers['transfer-encoding'] = 'chunked';
             }
-
-            if (!readable) {
+            else {
                 o.headers['content-type'] = 'application/json';
                 o.headers['content-length'] = data ? Buffer.byteLength(data) : 0;
 
@@ -239,13 +235,17 @@ module.exports = (function(root) {
                 }
 
                 if (options.headers != undefined) {
-                    extend(o.headers, options.headers);
+                    for(var key in options.headers)
+                        o.headers[key] = options.headers[key];
                 }
 
                 if (options.encoding) encoding = options.encoding;
             }
 
-            if (writable) {
+            if (options.writable) {
+                if(!data && !data.on && typeof data.on !== 'function')
+                    throw new PandaError(ERROR.STREAM);
+                
                 transmit = request(o).on('response', function(message) {
                     if (message.statusCode < 400) {
                         data.emit('open', message);
@@ -261,23 +261,24 @@ module.exports = (function(root) {
                         buffer.push(chunk);
                     }).on('end', function() {
                         var headers = response.headers || {},
-                            result = result = buffer.join('');
+                            result = result = buffer.join(''),
+                            statusCode = response.statusCode,
+                            contentType = headers['content-type'];
 
-                        self.logger("statusCode %d, content-type", response.statusCode, headers['content-type']);
+                        self.logger("statusCode %d, content-type", statusCode, contentType);
 
-                        if (headers['content-type'].indexOf('json') >= 0) {
+                        if (contentType.indexOf('json') >= 0) {
                             result = JSON.parse(result);
                         }
 
                         self.logger("response: %j", JSON.stringify(result, null, 1));
 
-                        if (response.statusCode < 400) {
+                        if (statusCode && statusCode < 400) {
                             callback(undefined, result);
                         } else {
-
                             callback(new PandaError({
-                                code: response.statusCode,
-                                error: HTTP_ERROR[response.statusCode],
+                                code: statusCode,
+                                error: HTTP_ERROR[statusCode],
                                 message: JSON.stringify(result),
                                 data: result
                             }), response);
@@ -290,20 +291,28 @@ module.exports = (function(root) {
             }
 
             transmit.on('error', function(error) {
-                if (readable || writable) data.emit('error', error);
+                if (options.readable || options.writable) {
+                    if(!data && !data.on && typeof data.on !== 'function')
+                        throw new PandaError(ERROR.STREAM);
+                    
+                    data.emit('error', error);
+                }
+                
                 if (callback) callback(error);
                 else throw new PandaError(error);
             });
 
 
-            if (readable) {
+            if (options.readable) {
+                if(!data && !data.pipe && typeof data.pipe !== 'function')
+                    throw new PandaError(ERROR.STREAM);
+                
                 data.pipe(transmit);
             } else {
                 transmit.end(data, encoding);
             }
 
         }
-
     };
 
     // request methods
@@ -313,56 +322,6 @@ module.exports = (function(root) {
                 return this.request(method, url, data, opt, res);
             };
         });
-
-
-    // utility functions
-    function isObject(o) {
-        return (
-            typeof o === 'object' &&
-            o !== null &&
-            !Array.isArray(o)
-        );
-    }
-
-    // extends object
-    function extend() {
-        var source,
-            target,
-            deep = false,
-            args = Array.prototype.slice.call(arguments),
-            argc = args.length,
-            arg = 0;
-
-        if (typeof args[0] === "boolean") deep = args[arg++];
-
-        target = args[arg++];
-
-        if (argc <= arg) return extend(deep, {}, target);
-
-        while (arg < argc) {
-            source = args[arg++];
-
-            if (!isObject(source)) continue;
-
-            Object.keys(source).forEach(function(key) {
-                var from = source[key],
-                    to = target[key];
-
-                if (deep && isObject(from)) {
-                    if (target.hasOwnProperty(key) && isObject(to)) {
-                        extend(true, target[key], from);
-                    } else {
-                        target[key] = extend(true, {}, from);
-                    }
-                } else if (from !== undefined) {
-                    target[key] = from;
-                }
-            });
-        }
-
-        return target;
-    }
-
 
     return PandaAPI;
 
