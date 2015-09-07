@@ -77,6 +77,11 @@ module.exports = (function(root) {
             code: 5,
             error: 'stream error',
             message: 'missing or invalid stream'
+        },
+        TIMEOUT: {
+            code: 6,
+            error: 'timeout error',
+            message: 'operation timed out'
         }
     };
 
@@ -195,6 +200,11 @@ module.exports = (function(root) {
 
             this.logger("request:", method, path);
 
+            if (['get', 'head'].indexOf(method) >= 0) {
+                callback = options;
+                options = data;
+            }
+
             if (typeof options === 'function') {
                 callback = options;
                 options = undefined;
@@ -206,7 +216,7 @@ module.exports = (function(root) {
             }
 
             options = options || {};
-          
+
             o.method = method || 'get';
             o.agent = this.httpsAgent;
             o.hostname = this.shop;
@@ -230,17 +240,13 @@ module.exports = (function(root) {
                 o.headers['api-access-token'] = this.oauth.access_token;
             }
 
-            if (options.timeout != undefined) {
-                request.socket.setTimeout(options.timeout);
-            }
-            
             if (options.headers != undefined) {
                 for (var key in options.headers)
                     o.headers[key] = options.headers[key];
             }
 
             if (options.encoding) encoding = options.encoding;
-            
+
             if (options.writable) {
                 if (!data && !data.on && typeof data.on !== 'function')
                     throw new PandaError(ERROR.STREAM);
@@ -272,7 +278,7 @@ module.exports = (function(root) {
                             result = result = buffer.join(''),
                             statusCode = response.statusCode,
                             contentType = headers['content-type'];
-                       
+
                         if (contentType.indexOf('json') >= 0) {
                             result = JSON.parse(result);
                         }
@@ -296,6 +302,17 @@ module.exports = (function(root) {
 
                     }).on('error', function(error) {
                         callback(error, response);
+                    });
+                });
+            }
+
+            if (options.timeout != undefined) {
+                transmit.on('socket', function(socket) {
+                    socket.setTimeout(options.timeout);
+
+                    socket.on('timeout', function() {
+                        if (callback) callback(new PandaError(ERROR.TIMEOUT));
+                        transmit.abort();
                     });
                 });
             }
