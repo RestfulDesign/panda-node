@@ -205,6 +205,8 @@ module.exports = (function(root) {
                 data = undefined;
             }
 
+            options = options || {};
+          
             o.method = method || 'get';
             o.agent = this.httpsAgent;
             o.hostname = this.shop;
@@ -228,19 +230,17 @@ module.exports = (function(root) {
                 o.headers['api-access-token'] = this.oauth.access_token;
             }
 
-            if (typeof options === 'object') {
-                if (options.timeout != undefined) {
-                    request.socket.setTimeout(options.timeout);
-                }
-
-                if (options.headers != undefined) {
-                    for (var key in options.headers)
-                        o.headers[key] = options.headers[key];
-                }
-
-                if (options.encoding) encoding = options.encoding;
+            if (options.timeout != undefined) {
+                request.socket.setTimeout(options.timeout);
+            }
+            
+            if (options.headers != undefined) {
+                for (var key in options.headers)
+                    o.headers[key] = options.headers[key];
             }
 
+            if (options.encoding) encoding = options.encoding;
+            
             if (options.writable) {
                 if (!data && !data.on && typeof data.on !== 'function')
                     throw new PandaError(ERROR.STREAM);
