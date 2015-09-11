@@ -53,80 +53,145 @@ module.exports = (function(root) {
     PandaError.prototype.constructor = PandaError;
 
     var ERROR = {
-        CONFIG_OPTIONS: {
+        TYPE: {
             code: 1,
-            error: 'config error',
-            message: 'missing constructor options'
+            error: 'type error',
+            message: 'invalid type'
         },
-        CONFIG_SHOP: {
-            code: 2,
-            error: 'config error',
-            message: 'missing or invalid shop name'
+        OPTIONS: {
+            code: 1,
+            error: 'type error',
+            message: 'missing or invalid options object'
         },
-        CONFIG_OAUTH: {
-            code: 3,
-            error: 'config error',
-            message: 'missing or invalid oauth settings'
+        SHOP: {
+            code: 1,
+            error: 'type error',
+            message: 'shop must be a hostname string'
         },
-        OAUTH_SIGNATURE: {
-            code: 4,
-            error: 'oauth error',
-            message: 'signature mismatch'
+        CALLBACK: {
+            code: 1,
+            error: 'type error',
+            message: 'callback must be a function'
+        },
+        LOGGER: {
+            code: 1,
+            error: 'type error',
+            message: 'logger must be a function'
+        },
+        OAUTH: {
+            code: 1,
+            error: 'type error',
+            message: 'oauth must be an object'
         },
         STREAM: {
-            code: 5,
-            error: 'stream error',
-            message: 'missing or invalid stream'
+            code: 1,
+            error: 'type error',
+            message: 'missing or invalid stream class'
+        },
+        PARAMS: {
+            code: 4,
+            error: 'type error',
+            message: 'missing parameters object'
+        },
+        OAUTH_SCOPE: {
+            code: 2,
+            error: 'oauth error',
+            message: 'missing or invalid oauth scope'
+        },
+        OAUTH_API_KEY: {
+            code: 2,
+            error: 'oauth error',
+            message: 'missing or invalid oauth api_key'
+        },
+        OAUTH_PRIVATE_KEY: {
+            code: 2,
+            error: 'oauth error',
+            message: 'missing or invalid oauth private_key'
+        },
+        OAUTH_SIGNATURE: {
+            code: 2,
+            error: 'oauth error',
+            message: 'oauth signature mismatch'
+        },
+        OAUTH_SHARED_SECRET: {
+            code: 2,
+            error: 'oauth error',
+            message: 'missing or invalid oauth shared_secret'
         },
         TIMEOUT: {
-            code: 6,
+            code: 3,
             error: 'timeout error',
             message: 'operation timed out'
+        },
+        SIGNATURE_PARAM: {
+            code: 4,
+            error: 'params error',
+            message: 'missing or invalid signature'
+        },
+        CODE_PARAM: {
+            code: 4,
+            error: 'params error',
+            message: 'missing or invalid code'
         }
     };
 
     function PandaAPI(options) {
+        options = options || {};
 
         if (!(this instanceof PandaAPI))
             return new PandaAPI(options);
 
-        if (options == undefined)
-            throw new PandaError(ERROR.CONFIG_OPTIONS);
-
-        if (typeof options.shop !== 'string')
-            throw new PandaError(ERROR.CONFIG_SHOP);
-
-        if (options.oauth == undefined)
-            throw new PandaError(ERROR.CONFIG_OAUTH);
-
-        this.oauth = options.oauth;
         this.debug = !!options.debug;
-        this.shop = options.shop;
-        this.name = this.shop.split('.')[0];
+
+        if (this.debug) {
+            if (options.logger && typeof options.logger !== 'function')
+                throw new PandaError(ERROR.LOGGER);
+
+            this.logger = options.logger || console.log;
+        }
+
+        this.shop = options.shop || '';
+        this.oauth = options.oauth || {};
         this.port = options.port || 443;
 
         this.httpsAgent = new https.Agent({
             keepAlive: options.keepAlive || true,
             maxSockets: options.maxSockets || 4
         });
-
-        // used for debugging
-        this.logger = this.debug ? (options.logger || console.log) : function() {};
     }
 
     PandaAPI.prototype = {
+        "logger": function() {},
         "getAuthURL": function() {
-            var url = 'https://' + this.shop;
+            var url = 'https://';
 
+            if (!this.shop || typeof this.shop !== 'string')
+                throw new PandaError(ERROR.SHOP);
+
+            url += this.shop;
             url += '/admin/oauth/authorize?';
+
+            if (!this.oauth.api_key)
+                throw new PandaError(ERROR.OAUTH_API_KEY);
+
             url += 'client_id=' + this.oauth.api_key;
+
+            if (!this.oauth.scope)
+                throw new PandaError(ERROR.OAUTH_SCOPE);
+
             url += '&scope=' + this.oauth.scope;
             url += '&response_type=code';
-            url += '&redirect_uri=' + this.oauth.redirect_uri;
+
+            if (this.oauth.redirect_uri) {
+                url += '&redirect_uri=' + this.oauth.redirect_uri;
+            }
 
             return url;
         },
         "setAccessToken": function(token) {
+            if (typeof this.oauth !== 'object')
+                throw new PandaError(ERROR.OAUTH);
+
             this.oauth.access_token = token;
         },
         "urlQuerystring": function(url, query) {
@@ -144,11 +209,24 @@ module.exports = (function(root) {
             return url;
         },
         "validateSignature": function(params) {
-            var signature = params['signature'],
-                secret = this.oauth.shared_secret,
+            var signature,
+                secret,
                 parameters = [],
                 digest,
                 message;
+
+            if (typeof params !== 'object')
+                throw new PandaError(ERROR.PARAMS);
+
+            if (!params['signature'])
+                throw new PandaError(ERROR.SIGNATURE_PARAM);
+
+            signature = params['signature'];
+
+            if (!this.oauth.shared_secret)
+                throw new PandaError(ERROR.OAUTH_SHARED_SECRET);
+
+            secret = this.oauth.shared_secret;
 
             for (var key in params) {
                 if (key != 'signature') {
@@ -162,22 +240,25 @@ module.exports = (function(root) {
 
             return (digest === signature);
         },
-        "exchangeToken": function(params, callback) {
-            var data, error;
+        "getAccessTokenFromCode": function(code, callback) {
+            var data, self = this;
 
-            if (!this.validateSignature(params)) {
-                error = new PandaError(ERROR.OAUTH_SIGNATURE);
+            if (typeof code !== 'string')
+                throw new PandaError(ERROR.CODE_PARAM);
+            
+            if (typeof callback !== 'function')
+                throw new PandaError(ERROR.CALLBACK);
+            
+            if (!this.oauth.api_key)
+                throw new PandaError(ERROR.OAUTH_API_KEY);
 
-                if (callback) callback(error);
-                else throw error;
-
-                return;
-            }
+            if (!this.oauth.private_key)
+                throw new PandaError(ERROR.OAUTH_PRIVATE_KEY);
 
             data = {
                 client_id: this.oauth.api_key,
                 client_secret: this.oauth.private_key,
-                code: params['code'],
+                code: code,
                 grant_type: 'authorization_code'
             };
 
@@ -190,6 +271,22 @@ module.exports = (function(root) {
                     callback(undefined, ret);
                 }
             });
+
+            return this;
+        },
+        "exchangeToken": function(params, callback) {
+            var data, error;
+
+            if (typeof callback !== 'function')
+                throw new PandaError(ERROR.CALLBACK);
+
+            if (!this.validateSignature(params)) {
+                callback(new PandaError(ERROR.OAUTH_SIGNATURE));
+            } else {
+                this.getAccessTokenFromCode(params['code'], callback);
+            }
+
+            return this;
         },
         request: function(method, path, data, options, callback) {
             var request = https.request,
@@ -226,85 +323,31 @@ module.exports = (function(root) {
 
             o.headers['accept'] = 'application/json';
 
-            if (options.readable) {
-                o.headers['transfer-encoding'] = 'chunked';
-            } else {
+            if (!options.readable) {
+                if (data && typeof data !== 'string')
+                    data = JSON.stringify(data);
+                
                 o.headers['content-type'] = 'application/json';
                 o.headers['content-length'] = data ? Buffer.byteLength(data) : 0;
-
-                if (data && typeof data !== 'string')
-                    data = JSON.stringify(data); // note: throws on error
+            } else {
+                o.headers['transfer-encoding'] = 'chunked';
             }
 
-            if (this.oauth.access_token) {
+            if (this.oauth.access_token)
                 o.headers['api-access-token'] = this.oauth.access_token;
-            }
 
             if (options.headers != undefined) {
                 for (var key in options.headers)
                     o.headers[key] = options.headers[key];
             }
 
-            if (options.encoding) encoding = options.encoding;
+            if (options.encoding)
+                encoding = options.encoding;
 
-            if (options.writable) {
-                if (!data && !data.on && typeof data.on !== 'function')
-                    throw new PandaError(ERROR.STREAM);
-
-                transmit = request(o).on('response', function(message) {
-                    var statusCode = message.statusCode,
-                        statusMessage = message.statusMessage;
-
-                    if (statusCode && statusCode < 400) {
-                        message.pipe(data);
-                    } else {
-                        data.emit('error', new PandaError({
-                            code: statusCode,
-                            error: HTTP_ERROR[statusCode],
-                            message: statusMessage,
-                            data: message
-                        }));
-                    }
-
-                });
-            } else {
-                transmit = request(o, function(response) {
-                    var buffer = [];
-
-                    response.on('data', function(chunk) {
-                        buffer.push(chunk);
-                    }).on('end', function() {
-                        var headers = response.headers || {},
-                            result = result = buffer.join(''),
-                            statusCode = response.statusCode,
-                            contentType = headers['content-type'];
-
-                        if (contentType.indexOf('json') >= 0) {
-                            result = JSON.parse(result);
-                        }
-
-                        self.logger("response: status code %d, content type",
-                                    statusCode,
-                                    contentType,
-                                    JSON.stringify(headers, null, 1),
-                                    JSON.stringify(result, null, 1));
-
-                        if (statusCode && statusCode < 400) {
-                            callback(undefined, result);
-                        } else {
-                            callback(new PandaError({
-                                code: statusCode,
-                                error: HTTP_ERROR[statusCode],
-                                message: JSON.stringify(result),
-                                data: result
-                            }), response);
-                        }
-
-                    }).on('error', function(error) {
-                        callback(error, response);
-                    });
-                });
-            }
+            if(options.writable)
+                transmit = requestStream(request,o,data);
+            else
+                transmit = requestCallback(request,o,callback);
 
             if (options.timeout != undefined) {
                 transmit.on('socket', function(socket) {
@@ -342,6 +385,68 @@ module.exports = (function(root) {
         }
     };
 
+    function requestStream(request,options,stream){
+        if (!stream && !stream.on && typeof stream.on !== 'function')
+            throw new PandaError(ERROR.STREAM);
+
+        var req = request(options);
+
+        req.on('response', function(message) {
+            var statusCode = message.statusCode,
+                statusMessage = message.statusMessage;
+
+            if (statusCode && statusCode < 400) {
+                message.pipe(stream);
+            } else {
+                stream.emit('error', new PandaError({
+                    code: statusCode,
+                    error: HTTP_ERROR[statusCode],
+                    message: statusMessage,
+                    data: message
+                }));
+            }
+
+            message.on('error', function(error) {
+                stream.emit('error', error);
+            });
+        });
+
+        return req;
+    }
+
+    function requestCallback(request,options,callback){
+        var req = request(options, function(response) {
+            var buffer = [];
+
+            response.on('data', function(chunk) {
+                buffer.push(chunk);
+            }).on('end', function() {
+                var headers = response.headers || {},
+                    result = result = buffer.join(''),
+                    statusCode = response.statusCode,
+                    contentType = headers['content-type'];
+
+                if (contentType.indexOf('json') >= 0) {
+                    result = JSON.parse(result);
+                }
+
+                if (statusCode && statusCode < 400) {
+                    callback(undefined, result);
+                } else {
+                    callback(new PandaError({
+                        code: statusCode,
+                        error: HTTP_ERROR[statusCode],
+                        message: JSON.stringify(result),
+                        data: result
+                    }), response);
+                }
+
+            }).on('error', function(error) {
+                callback(error, response);
+            });
+        });
+    }
+    
     // request methods
     ['head', 'get', 'put', 'post', 'delete', 'patch', 'trace', 'connect', 'options']
         .forEach(function(method) {
