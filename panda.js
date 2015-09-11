@@ -19,121 +19,15 @@
 module.exports = (function(root) {
     "use strict";
 
+    var PandaError = require('errors');
+    var ERROR = PandaError.ERROR;
+    
     var https = require('https');
     var HTTP_ERROR = require('http').STATUS_CODES;
 
     var crypto = require('crypto');
     var querystring = require('querystring');
 
-
-    function PandaError(code, error, message, data) {
-        if (Error.captureStackTrace)
-            Error.captureStackTrace(this, this.constructor);
-
-        this.name = 'panda_error';
-
-        if (error == undefined && isNaN(code)) {
-            error = code;
-        }
-
-        if (typeof error === 'object') {
-            this.code = error.code;
-            this.error = error.error;
-            this.message = error.message;
-            this.data = error.data;
-        } else {
-            this.code = code;
-            this.error = error;
-            this.message = message;
-            this.data = data;
-        }
-    }
-
-    PandaError.prototype = Object.create(Error.prototype);
-    PandaError.prototype.constructor = PandaError;
-
-    var ERROR = {
-        TYPE: {
-            code: 1,
-            error: 'type error',
-            message: 'invalid type'
-        },
-        OPTIONS: {
-            code: 1,
-            error: 'type error',
-            message: 'missing or invalid options object'
-        },
-        SHOP: {
-            code: 1,
-            error: 'type error',
-            message: 'shop must be a hostname string'
-        },
-        CALLBACK: {
-            code: 1,
-            error: 'type error',
-            message: 'callback must be a function'
-        },
-        LOGGER: {
-            code: 1,
-            error: 'type error',
-            message: 'logger must be a function'
-        },
-        OAUTH: {
-            code: 1,
-            error: 'type error',
-            message: 'oauth must be an object'
-        },
-        STREAM: {
-            code: 1,
-            error: 'type error',
-            message: 'missing or invalid stream class'
-        },
-        PARAMS: {
-            code: 4,
-            error: 'type error',
-            message: 'missing parameters object'
-        },
-        OAUTH_SCOPE: {
-            code: 2,
-            error: 'oauth error',
-            message: 'missing or invalid oauth scope'
-        },
-        OAUTH_API_KEY: {
-            code: 2,
-            error: 'oauth error',
-            message: 'missing or invalid oauth api_key'
-        },
-        OAUTH_PRIVATE_KEY: {
-            code: 2,
-            error: 'oauth error',
-            message: 'missing or invalid oauth private_key'
-        },
-        OAUTH_SIGNATURE: {
-            code: 2,
-            error: 'oauth error',
-            message: 'oauth signature mismatch'
-        },
-        OAUTH_SHARED_SECRET: {
-            code: 2,
-            error: 'oauth error',
-            message: 'missing or invalid oauth shared_secret'
-        },
-        TIMEOUT: {
-            code: 3,
-            error: 'timeout error',
-            message: 'operation timed out'
-        },
-        SIGNATURE_PARAM: {
-            code: 4,
-            error: 'params error',
-            message: 'missing or invalid signature'
-        },
-        CODE_PARAM: {
-            code: 4,
-            error: 'params error',
-            message: 'missing or invalid code'
-        }
-    };
 
     function PandaAPI(options) {
         options = options || {};
@@ -150,7 +44,7 @@ module.exports = (function(root) {
             this.logger = options.logger || console.log;
         }
 
-        this.shop = options.shop || '';
+        this.shop = (options.shop || '');
         this.oauth = options.oauth || {};
         this.port = options.port || 443;
 
@@ -163,12 +57,8 @@ module.exports = (function(root) {
     PandaAPI.prototype = {
         "logger": function() {},
         "getAuthURL": function() {
-            var url = 'https://';
+            var url = 'https://' + this.shop;
 
-            if (!this.shop || typeof this.shop !== 'string')
-                throw new PandaError(ERROR.SHOP);
-
-            url += this.shop;
             url += '/admin/oauth/authorize?';
 
             if (!this.oauth.api_key)
@@ -241,7 +131,7 @@ module.exports = (function(root) {
             return (digest === signature);
         },
         "getAccessTokenFromCode": function(code, callback) {
-            var data, self = this;
+            var data, url, self = this;
 
             if (typeof code !== 'string')
                 throw new PandaError(ERROR.CODE_PARAM);
@@ -262,7 +152,9 @@ module.exports = (function(root) {
                 grant_type: 'authorization_code'
             };
 
-            this.post('/admin/oauth/token.json', data, function(err, ret) {
+            url = '/admin/oauth/token.json';
+
+            this.post(url, data, function(err, ret) {
 
                 if (err) {
                     callback(err, ret);
@@ -289,12 +181,8 @@ module.exports = (function(root) {
             return this;
         },
         request: function(method, path, data, options, callback) {
-            var request = https.request,
-                encoding = 'utf8',
-                self = this,
-                transmit,
-                o = {};
-
+            var self = this, request;
+            
             this.logger("request:", method, path);
 
             if (['get', 'head'].indexOf(method) >= 0) {
@@ -314,53 +202,50 @@ module.exports = (function(root) {
 
             options = options || {};
 
-            o.method = method || 'get';
-            o.agent = this.httpsAgent;
-            o.hostname = this.shop;
-            o.port = this.port;
-            o.path = path;
-            o.headers = {};
+            options.method = method || 'get';
+            options.agent = this.httpsAgent;
+            options.hostname = this.shop;
+            options.port = this.port;
+            options.path = path;
+            options.headers = options.headers || {};
 
-            o.headers['accept'] = 'application/json';
+            if(!options.headers['accept'])
+                options.headers['accept'] = 'application/json';
 
             if (!options.readable) {
                 if (data && typeof data !== 'string')
                     data = JSON.stringify(data);
+
+                if(!options.headers['content-type'])
+                    options.headers['content-type'] = 'application/json';
+
+                if(!options.headers['content-length'])
+                    options.headers['content-length'] = data ? Buffer.byteLength(data) : 0;
                 
-                o.headers['content-type'] = 'application/json';
-                o.headers['content-length'] = data ? Buffer.byteLength(data) : 0;
             } else {
-                o.headers['transfer-encoding'] = 'chunked';
+                options.headers['transfer-encoding'] = 'chunked';
             }
 
             if (this.oauth.access_token)
-                o.headers['api-access-token'] = this.oauth.access_token;
-
-            if (options.headers != undefined) {
-                for (var key in options.headers)
-                    o.headers[key] = options.headers[key];
-            }
-
-            if (options.encoding)
-                encoding = options.encoding;
+                options.headers['api-access-token'] = this.oauth.access_token;
 
             if(options.writable)
-                transmit = requestStream(request,o,data);
+                request = requestStream(options,data);
             else
-                transmit = requestCallback(request,o,callback);
+                request = requestCallback(options,callback);
 
             if (options.timeout != undefined) {
-                transmit.on('socket', function(socket) {
+                request.on('socket', function(socket) {
                     socket.setTimeout(options.timeout);
 
                     socket.on('timeout', function() {
                         if (callback) callback(new PandaError(ERROR.TIMEOUT));
-                        transmit.abort();
+                        request.abort();
                     });
                 });
             }
 
-            transmit.on('error', function(error) {
+            request.on('error', function(error) {
                 if (options.readable || options.writable) {
                     if (!data && !data.on && typeof data.on !== 'function')
                         throw new PandaError(ERROR.STREAM);
@@ -377,21 +262,23 @@ module.exports = (function(root) {
                 if (!data && !data.pipe && typeof data.pipe !== 'function')
                     throw new PandaError(ERROR.STREAM);
 
-                data.pipe(transmit);
+                data.pipe(request);
             } else {
-                transmit.end(data, encoding);
+                request.end(data, options.encoding);
             }
 
         }
     };
 
-    function requestStream(request,options,stream){
+    function requestStream(options,stream){
+        var request;
+        
         if (!stream && !stream.on && typeof stream.on !== 'function')
             throw new PandaError(ERROR.STREAM);
 
-        var req = request(options);
+        request = https.request(options);
 
-        req.on('response', function(message) {
+        request.on('response', function(message) {
             var statusCode = message.statusCode,
                 statusMessage = message.statusMessage;
 
@@ -411,11 +298,11 @@ module.exports = (function(root) {
             });
         });
 
-        return req;
+        return request;
     }
 
-    function requestCallback(request,options,callback){
-        var req = request(options, function(response) {
+    function requestCallback(options,callback){
+        var request = https.request(options, function(response) {
             var buffer = [];
 
             response.on('data', function(chunk) {
@@ -445,6 +332,8 @@ module.exports = (function(root) {
                 callback(error, response);
             });
         });
+
+        return request;
     }
     
     // request methods
