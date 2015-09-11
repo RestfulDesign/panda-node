@@ -135,7 +135,7 @@ module.exports = (function(){
         }
     };
 
-    PandaError.prototype.ERROR = ERROR;
+    PandaError.ERROR = ERROR;
 
     return PandaError;
 }());

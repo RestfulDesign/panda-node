@@ -19,7 +19,7 @@
 module.exports = (function(root) {
     "use strict";
 
-    var PandaError = require('errors');
+    var PandaError = require('./errors');
     var ERROR = PandaError.ERROR;
     
     var https = require('https');
@@ -28,7 +28,7 @@ module.exports = (function(root) {
     var crypto = require('crypto');
     var querystring = require('querystring');
 
-
+    
     function PandaAPI(options) {
         options = options || {};
 
