@@ -37,14 +37,7 @@ module.exports = (function(root) {
 
         this.debug = !!options.debug;
 
-        if (this.debug) {
-            if (options.logger && typeof options.logger !== 'function')
-                throw new PandaError(ERROR.LOGGER);
-
-            this.logger = options.logger || console.log;
-        }
-
-        this.shop = (options.shop || '');
+        this.shop = options.shop || '';
         this.oauth = options.oauth || {};
         this.port = options.port || 443;
 
@@ -52,6 +45,13 @@ module.exports = (function(root) {
             keepAlive: options.keepAlive || true,
             maxSockets: options.maxSockets || 4
         });
+
+        if (options.logger) {
+            if(typeof options.logger !== 'function')
+                throw new PandaError(ERROR.LOGGER);
+
+            this.logger = options.logger;
+        }
     }
 
     PandaAPI.prototype = {
@@ -83,6 +83,8 @@ module.exports = (function(root) {
                 throw new PandaError(ERROR.OAUTH);
 
             this.oauth.access_token = token;
+
+            return this;
         },
         "urlQuerystring": function(url, query) {
             var uri;
@@ -154,7 +156,7 @@ module.exports = (function(root) {
 
             url = '/admin/oauth/token.json';
 
-            this.post(url, data, function(err, ret) {
+            return this.post(url, data, function(err, ret) {
 
                 if (err) {
                     callback(err, ret);
@@ -163,8 +165,6 @@ module.exports = (function(root) {
                     callback(undefined, ret);
                 }
             });
-
-            return this;
         },
         "exchangeToken": function(params, callback) {
             var data, error;
@@ -259,6 +259,7 @@ module.exports = (function(root) {
 
 
             if (options.readable) {
+
                 if (!data && !data.pipe && typeof data.pipe !== 'function')
                     throw new PandaError(ERROR.STREAM);
 
@@ -267,6 +268,7 @@ module.exports = (function(root) {
                 request.end(data, options.encoding);
             }
 
+            return this;
         }
     };
 
