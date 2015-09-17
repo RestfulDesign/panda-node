@@ -35,8 +35,6 @@ module.exports = (function(root) {
         if (!(this instanceof PandaAPI))
             return new PandaAPI(options);
 
-        this.debug = !!options.debug;
-
         this.shop = options.shop || '';
         this.oauth = options.oauth || {};
         this.port = options.port || 443;
