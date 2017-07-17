@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/*global require console module Buffer */
+/*global require console module Buffer setTimeout */
 
 module.exports = (function(root) {
     "use strict";
@@ -30,6 +30,7 @@ module.exports = (function(root) {
     var crypto = require('crypto');
     var querystring = require('querystring');
 
+    var LIMIT_WAIT = 500; // retry interval on http error 429 (api limit)
     
     function PandaAPI(options) {
         options = options || {};
@@ -188,7 +189,6 @@ module.exports = (function(root) {
             return this;
         },
         request: function(method, path, data, options, callback) {
-            var self = this, request;
             
             this.logger("request:", method, path);
 
@@ -237,55 +237,24 @@ module.exports = (function(root) {
             if (this.oauth.access_token)
                 options.headers['api-access-token'] = this.oauth.access_token;
 
-            if(options.writable)
-                request = requestStream(options,data);
-            else
-                request = requestCallback(options,callback);
-
-            if (options.timeout != undefined) {
-                request.on('socket', function(socket) {
-                    socket.setTimeout(options.timeout);
-
-                    socket.on('timeout', function() {
-                        if (callback) callback(new PandaError(PANDA_ERROR.TIMEOUT));
-                        request.abort();
-                    });
-                });
-            }
-
-            request.on('error', function(error) {
-                if (options.readable || options.writable) {
-                    if (!data && !data.on && typeof data.on !== 'function') throw error;
-                    else data.emit('error', error);
-                } else {
-                    if (callback) callback(error);
-                    else throw error;
-                }
-            });
-
-
-            if (options.readable) {
-
-                if (!data && !data.pipe && typeof data.pipe !== 'function') {
+            if(options.writable) {
+                if (!data || !data.on) {
                     throw new PandaError(PANDA_ERROR.STREAM);
-                } else {                
-                    data.pipe(request);
-                }
+                }                
+                requestStream(options,data);
             } else {
-                request.end(data, options.encoding);
+                requestMethod(options,data,callback);
             }
-
+                                            
             return this;
         }
     };
 
-    function requestStream(options,stream){
-        var request;
-        
-        if (!stream && !stream.on && typeof stream.on !== 'function')
-            throw new PandaError(PANDA_ERROR.STREAM);
+    function requestStream(options,stream,retry_count){
+                
+        var request = https.request(options);
 
-        request = https.request(options);
+        if(retry_count === undefined) retry_count = 0;
 
         request.on('response', function(message) {
             var statusCode = message.statusCode,
@@ -293,6 +262,11 @@ module.exports = (function(root) {
 
             if (statusCode && statusCode < 400) {
                 message.pipe(stream);
+            } else if (statusCode === 429 && retry_count <3){
+                setTimeout(function(){
+                    retry_count++;
+                    requestStream(options,stream,retry_count);
+                },LIMIT_WAIT);
             } else {
                 stream.emit('error', new HttpError(
                     statusCode,
@@ -305,13 +279,28 @@ module.exports = (function(root) {
             message.on('error', function(error) {
                 stream.emit('error', error);
             });
+        }).on('error', function(error) {
+            stream.emit('error',error);
         });
 
-        return request;
+        if (options.timeout != undefined) {
+            request.on('socket', function(socket) {
+                socket.setTimeout(options.timeout);
+
+                socket.on('timeout', function() {
+                    stream.emit('error',new PandaError(PANDA_ERROR.TIMEOUT));
+                    request.abort();
+                });
+            });
+        }
     }
 
-    function requestCallback(options,callback){
-        var request = https.request(options, function(response) {
+    function requestMethod(options,data,callback,retry_count){
+        var request;
+
+        if(retry_count === undefined) retry_count = 0;
+        
+        request = https.request(options, function(response) {
             var buffer = [];
 
             response.on('data', function(chunk) {
@@ -328,7 +317,12 @@ module.exports = (function(root) {
 
                 if (statusCode && statusCode < 400) {
                     callback(undefined, result);
-                } else {
+                } else if (statusCode === 429 && retry_count <3){
+                    setTimeout(function(){
+                        retry_count++;
+                        requestMethod(options,data,callback,retry_count);
+                    },LIMIT_WAIT);
+                } else {                    
                     callback(new HttpError(
                         statusCode,
                         HTTP_ERROR[statusCode],
@@ -337,13 +331,21 @@ module.exports = (function(root) {
                     ), response);
                 }
 
-            }).on('error', function(error) {
-                if (callback) callback(error);
-                else throw error;                
-            });
-        });
+            }).on('error', callback);
+        }).on('error', callback);        
 
-        return request;
+        if (options.timeout != undefined) {
+            request.on('socket', function(socket) {
+                socket.setTimeout(options.timeout);
+
+                socket.on('timeout', function() {
+                    callback(new PandaError(PANDA_ERROR.TIMEOUT));
+                    request.abort();
+                });
+            });
+        }
+
+        request.end(data, options.encoding);        
     }
     
     // request methods

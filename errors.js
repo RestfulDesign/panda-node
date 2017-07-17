@@ -32,12 +32,12 @@ module.exports = (function(){
     PandaError.prototype = Object.create(Error.prototype);
     PandaError.prototype.constructor = PandaError;
 
-    function HttpError(code, error, message, request){
+    function HttpError(code, error, message, data){
         this.name = 'HttpError';
         this.code = code;
         this.error = error;
         this.message = message;
-        this.request = request;
+        this.data = data;
     }
 
     HttpError.prototype = Object.create(Error.prototype);
