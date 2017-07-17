@@ -1,19 +1,23 @@
 {
-  "name": "panda-node",
-  "version": "0.1.6",
-  "description": "Panda node api",
-  "main": "panda.js",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/restfuldesign/panda-node"
-  },
-  "keywords": [
-    "pandacommerce"
-  ],
-  "author": "anders elo",
-  "license": "Apache-2.0",
-  "bugs": {
-    "url": "https://github.com/restfuldesign/panda-node/issues"
-  },
-  "homepage": "https://github.com/restfuldesign/panda-node"
+    "name": "panda-node",
+    "version": "0.1.7",
+    "description": "Panda node api",
+    "main": "panda.js",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/restfuldesign/panda-node"
+    },
+    "devDependencies":{
+        "mocha": "*",
+        "chai": "*"
+    },
+    "keywords": [
+        "pandacommerce"
+    ],
+    "author": "anders elo",
+    "license": "Apache-2.0",
+    "bugs": {
+        "url": "https://github.com/restfuldesign/panda-node/issues"
+    },
+    "homepage": "https://github.com/restfuldesign/panda-node"
 }

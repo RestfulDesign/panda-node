@@ -19,8 +19,10 @@
 module.exports = (function(root) {
     "use strict";
 
-    var PandaError = require('./errors');
-    var ERROR = PandaError.ERROR;
+    var Errors = require('./errors');
+    var PandaError = Errors.PandaError;
+    var HttpError = Errors.HttpError;
+    var PANDA_ERROR = PandaError.ERROR;
     
     var https = require('https');
     var HTTP_ERROR = require('http').STATUS_CODES;
@@ -35,9 +37,13 @@ module.exports = (function(root) {
         if (!(this instanceof PandaAPI))
             return new PandaAPI(options);
 
-        this.shop = options.shop || '';
+        this.hostname = options.hostname || options.shop || '';
         this.oauth = options.oauth || {};
         this.port = options.port || 443;
+        
+        this.authorization_url = this.oauth.authorization_url || '/admin/oauth/authorize';
+        this.accesstoken_url = this.oauth.accesstoken_url || '/admin/oauth/token.json';
+        if(!this.oauth.scope) this.oauth.scope = '';
 
         this.httpsAgent = new https.Agent({
             keepAlive: options.keepAlive || true,
@@ -46,7 +52,7 @@ module.exports = (function(root) {
 
         if (options.logger) {
             if(typeof options.logger !== 'function')
-                throw new PandaError(ERROR.LOGGER);
+                throw new PandaError(PANDA_ERROR.LOGGER);
 
             this.logger = options.logger;
         }
@@ -55,19 +61,22 @@ module.exports = (function(root) {
     PandaAPI.prototype = {
         "logger": function() {},
         "getAuthURL": function() {
-            var url = 'https://' + this.shop;
+            var url = 'https://' + this.hostname;
 
-            url += '/admin/oauth/authorize?';
+            url += this.authorization_url + '?';
 
             if (!this.oauth.api_key)
-                throw new PandaError(ERROR.OAUTH_API_KEY);
+                throw new PandaError(PANDA_ERROR.OAUTH_API_KEY);
 
             url += 'client_id=' + this.oauth.api_key;
+            
+            if(this.oauth.scope) {
+                if (typeof this.oauth.scope !== 'string')
+                    throw new PandaError(PANDA_ERROR.OAUTH_SCOPE);
 
-            if (!this.oauth.scope)
-                throw new PandaError(ERROR.OAUTH_SCOPE);
-
-            url += '&scope=' + this.oauth.scope;
+                url += '&scope=' + this.oauth.scope;
+            }
+            
             url += '&response_type=code';
 
             if (this.oauth.redirect_uri) {
@@ -78,7 +87,7 @@ module.exports = (function(root) {
         },
         "setAccessToken": function(token) {
             if (typeof this.oauth !== 'object')
-                throw new PandaError(ERROR.OAUTH);
+                throw new PandaError(PANDA_ERROR.OAUTH);
 
             this.oauth.access_token = token;
 
@@ -106,15 +115,15 @@ module.exports = (function(root) {
                 message;
 
             if (typeof params !== 'object')
-                throw new PandaError(ERROR.PARAMS);
+                throw new PandaError(PANDA_ERROR.PARAMS);
 
             if (!params['signature'])
-                throw new PandaError(ERROR.SIGNATURE_PARAM);
+                throw new PandaError(PANDA_ERROR.SIGNATURE_PARAM);
 
             signature = params['signature'];
 
             if (!this.oauth.shared_secret)
-                throw new PandaError(ERROR.OAUTH_SHARED_SECRET);
+                throw new PandaError(PANDA_ERROR.OAUTH_SHARED_SECRET);
 
             secret = this.oauth.shared_secret;
 
@@ -134,16 +143,16 @@ module.exports = (function(root) {
             var data, url, self = this;
 
             if (typeof code !== 'string')
-                throw new PandaError(ERROR.CODE_PARAM);
+                throw new PandaError(PANDA_ERROR.CODE_PARAM);
             
             if (typeof callback !== 'function')
-                throw new PandaError(ERROR.CALLBACK);
+                throw new PandaError(PANDA_ERROR.CALLBACK);
             
             if (!this.oauth.api_key)
-                throw new PandaError(ERROR.OAUTH_API_KEY);
+                throw new PandaError(PANDA_ERROR.OAUTH_API_KEY);
 
             if (!this.oauth.private_key)
-                throw new PandaError(ERROR.OAUTH_PRIVATE_KEY);
+                throw new PandaError(PANDA_ERROR.OAUTH_PRIVATE_KEY);
 
             data = {
                 client_id: this.oauth.api_key,
@@ -152,7 +161,7 @@ module.exports = (function(root) {
                 grant_type: 'authorization_code'
             };
 
-            url = '/admin/oauth/token.json';
+            url = this.accesstoken_url;
 
             return this.post(url, data, function(err, ret) {
 
@@ -168,10 +177,10 @@ module.exports = (function(root) {
             var data, error;
 
             if (typeof callback !== 'function')
-                throw new PandaError(ERROR.CALLBACK);
+                throw new PandaError(PANDA_ERROR.CALLBACK);
 
             if (!this.validateSignature(params)) {
-                callback(new PandaError(ERROR.OAUTH_SIGNATURE));
+                callback(new PandaError(PANDA_ERROR.OAUTH_SIGNATURE));
             } else {
                 this.getAccessTokenFromCode(params['code'], callback);
             }
@@ -202,10 +211,11 @@ module.exports = (function(root) {
 
             options.method = method || 'get';
             options.agent = this.httpsAgent;
-            options.hostname = this.shop;
+            options.hostname = this.hostname;
             options.port = this.port;
             options.path = path;
             options.headers = options.headers || {};
+            options.encoding = options.encoding || 'utf8';
 
             if(!options.headers['accept'])
                 options.headers['accept'] = 'application/json';
@@ -237,7 +247,7 @@ module.exports = (function(root) {
                     socket.setTimeout(options.timeout);
 
                     socket.on('timeout', function() {
-                        if (callback) callback(new PandaError(ERROR.TIMEOUT));
+                        if (callback) callback(new PandaError(PANDA_ERROR.TIMEOUT));
                         request.abort();
                     });
                 });
@@ -245,23 +255,22 @@ module.exports = (function(root) {
 
             request.on('error', function(error) {
                 if (options.readable || options.writable) {
-                    if (!data && !data.on && typeof data.on !== 'function')
-                        throw new PandaError(ERROR.STREAM);
-
-                    data.emit('error', error);
+                    if (!data && !data.on && typeof data.on !== 'function') throw error;
+                    else data.emit('error', error);
+                } else {
+                    if (callback) callback(error);
+                    else throw error;
                 }
-
-                if (callback) callback(error);
-                else throw new PandaError(error);
             });
 
 
             if (options.readable) {
 
-                if (!data && !data.pipe && typeof data.pipe !== 'function')
-                    throw new PandaError(ERROR.STREAM);
-
-                data.pipe(request);
+                if (!data && !data.pipe && typeof data.pipe !== 'function') {
+                    throw new PandaError(PANDA_ERROR.STREAM);
+                } else {                
+                    data.pipe(request);
+                }
             } else {
                 request.end(data, options.encoding);
             }
@@ -274,7 +283,7 @@ module.exports = (function(root) {
         var request;
         
         if (!stream && !stream.on && typeof stream.on !== 'function')
-            throw new PandaError(ERROR.STREAM);
+            throw new PandaError(PANDA_ERROR.STREAM);
 
         request = https.request(options);
 
@@ -285,12 +294,12 @@ module.exports = (function(root) {
             if (statusCode && statusCode < 400) {
                 message.pipe(stream);
             } else {
-                stream.emit('error', new PandaError({
-                    code: statusCode,
-                    error: HTTP_ERROR[statusCode],
-                    message: statusMessage,
-                    data: message
-                }));
+                stream.emit('error', new HttpError(
+                    statusCode,
+                    HTTP_ERROR[statusCode],
+                    statusMessage,
+                    message
+                ));
             }
 
             message.on('error', function(error) {
@@ -320,16 +329,17 @@ module.exports = (function(root) {
                 if (statusCode && statusCode < 400) {
                     callback(undefined, result);
                 } else {
-                    callback(new PandaError({
-                        code: statusCode,
-                        error: HTTP_ERROR[statusCode],
-                        message: JSON.stringify(result),
-                        data: result
-                    }), response);
+                    callback(new HttpError(
+                        statusCode,
+                        HTTP_ERROR[statusCode],
+                        JSON.stringify(result),
+                        result
+                    ), response);
                 }
 
             }).on('error', function(error) {
-                callback(error, response);
+                if (callback) callback(error);
+                else throw error;                
             });
         });
 
